@@ -12,6 +12,7 @@ class Subregion(object):
         self.orig_audio_path = ""
         self.output_path = ""
 
+
 def read_subregions(path):
     subregions = []
     with open(path, "rU") as input:
@@ -45,6 +46,35 @@ def slice_audio_file(subregions):
         pipe = sp.Popen(command, stdout=sp.PIPE, bufsize=10 ** 8)
         out, err = pipe.communicate()
 
+def concat_subregions(subregions):
+
+    filename = os.path.basename(subregions[0].orig_audio_path)[0:5]
+    filename = "{}_subregion_concat.wav".format(filename)
+    with open("concat_list.txt", "wb") as output:
+        for region in subregions:
+            output.write("file \'{}\'\n".format(region.output_path))
+
+    output = os.path.join(output_path, filename)
+    command = ["ffmpeg",
+               "-f",
+               "concat",
+               "-i",
+               "concat_list.txt",
+               "-c",
+               "copy",
+               output,
+               "-y"]
+
+    command_string = " ".join(command)
+    print command_string
+
+    pipe = sp.Popen(command, stdout=sp.PIPE, bufsize=10 ** 8)
+    out, err = pipe.communicate()
+
+    # cleanup
+    os.remove("concat_list.txt")
+    for region in subregions:
+        os.remove(region.output_path)
 
 def ms_to_hhmmss(interval):
     x_start = datetime.timedelta(milliseconds=interval[0])
@@ -75,5 +105,5 @@ if __name__ == "__main__":
     subregions = read_subregions(subregions_file)
 
     slice_audio_file(subregions)
-
+    concat_subregions(subregions)
 
