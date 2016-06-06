@@ -1,14 +1,23 @@
 import csv
 import os
 import sys
+import re
 import datetime
 import subprocess as sp
 
+from collections import deque
+
+
+interval_regx = re.compile("(\025\d+_\d+)")
+
 class Subregion(object):
-    def __init__(self, onset, offset, diff):
+    def __init__(self, onset, onset_ms, offset, offset_ms, diff):
         self.onset = onset
+        self.onset_ms =onset_ms
         self.end = offset
+        self.offset_ms = offset_ms
         self.time_diff = diff
+        self.diff = 0
         self.orig_audio_path = ""
         self.output_path = ""
 
@@ -20,7 +29,10 @@ def read_subregions(path):
         reader.next()
         for row in reader:
             interval = ms_to_hhmmss([int(row[1]), int(row[2])])
-            region = Subregion(interval[0], interval[1], interval[2])
+            region = Subregion(interval[0], int(row[1]),
+                               interval[1], int(row[2]),
+                               interval[2])
+            region.diff = int(row[2]) - int(row[1])
             region.orig_audio_path = audio_file
             out_path = os.path.join(output_path, "{}.wav".format(row[0]))
             region.output_path = out_path
@@ -96,6 +108,45 @@ def ms_to_hhmmss(interval):
 
     return [start, end, x_diff]
 
+
+def create_new_cha(subregions):
+    filename = os.path.basename(subregions[0].orig_audio_path)[0:5]
+    filename = "{}_subregion_concat.cha".format(filename)
+    output = os.path.join(output_path, filename)
+
+    region_deque = deque(subregions)
+    curr_region = region_deque.popleft()
+
+    total_time = region_time_sum(subregions)
+
+    header_finished = False
+    with open(cha_file, "rU") as original:
+        with open(output, "wb") as new_cha:
+            for index, line in enumerate(original):
+                if line.startswith("@") and (not header_finished) or (index < 9):
+                    new_cha.write(line)
+                else:
+                    header_finished = True
+                    int_regx_result = interval_regx.search(line)
+                    interval = ""
+                    if int_regx_result:
+                        interval = int_regx_result.group(1)
+                        split_interval
+
+
+def region_time_sum(subregions):
+    """
+    Returns the total time of the subregions
+    :param subregions:
+    :return: time sum of regions
+    """
+
+    time = 0
+    for region in subregions:
+        time += region.diff
+    return time
+
+
 if __name__ == "__main__":
     cha_file = sys.argv[1]
     subregions_file = sys.argv[2]
@@ -106,4 +157,6 @@ if __name__ == "__main__":
 
     slice_audio_file(subregions)
     concat_subregions(subregions)
+
+    create_new_cha(subregions)
 
