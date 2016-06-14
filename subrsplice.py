@@ -8,18 +8,20 @@ import subprocess as sp
 from collections import deque
 
 
-interval_regx = re.compile("(\025\d+_\d+)")
+interval_regx = re.compile("(\025\d+_\d+\025)")
 
 class Subregion(object):
-    def __init__(self, onset, onset_ms, offset, offset_ms, diff):
+    def __init__(self, number, onset, onset_ms, offset, offset_ms, diff, special):
+        self.number = number
         self.onset = onset
-        self.onset_ms =onset_ms
+        self.onset_ms = onset_ms
         self.end = offset
         self.offset_ms = offset_ms
         self.time_diff = diff
         self.diff = 0
         self.orig_audio_path = ""
         self.output_path = ""
+        self.special = special
 
 
 def read_subregions(path):
@@ -29,9 +31,9 @@ def read_subregions(path):
         reader.next()
         for row in reader:
             interval = ms_to_hhmmss([int(row[1]), int(row[2])])
-            region = Subregion(interval[0], int(row[1]),
-                               interval[1], int(row[2]),
-                               interval[2])
+            region = Subregion(row[0], interval[0], int(row[1]),
+                               interval[1], int(row[2]), interval[2],
+                               row[3])
             region.diff = int(row[2]) - int(row[1])
             region.orig_audio_path = audio_file
             out_path = os.path.join(output_path, "{}.wav".format(row[0]))
@@ -120,6 +122,20 @@ def create_new_cha(subregions):
     total_time = region_time_sum(subregions)
 
     header_finished = False
+
+    last_interval_read = None
+    last_interval_written = None
+
+    num_regions  = len(subregions)
+    curr_subreg_num = 1
+
+    begin_region_written = False
+    end_region_written = False
+
+    curr_subregion_diff = 0
+
+    output_interval_tail = 0
+
     with open(cha_file, "rU") as original:
         with open(output, "wb") as new_cha:
             for index, line in enumerate(original):
@@ -129,10 +145,96 @@ def create_new_cha(subregions):
                     header_finished = True
                     int_regx_result = interval_regx.search(line)
                     interval = ""
+                    split_interval = None
+
+                    # line with interval on it
                     if int_regx_result:
                         interval = int_regx_result.group(1)
-                        split_interval
+                        split_interval = interval.replace("\x15", "", 2).split("_")
+                        split_interval = map(int, split_interval)
 
+                        print split_interval
+                        last_interval_read = split_interval
+
+
+                        curr_subregion_diff = curr_region.onset_ms - output_interval_tail
+
+
+                        # interval is inside the range of the subregion
+                        if region_inside_region(curr_region, split_interval):
+                            print "print inside region"
+                            if not begin_region_written: # at the beginning
+
+                                if not curr_region.special:
+                                    new_cha.write("%com:\tregion {} of {} starts. (coded subregion) original timestamp start: {}\n".\
+                                            format(curr_region.number,
+                                                   num_regions,
+                                                   curr_region.onset_ms))
+                                else:
+                                    new_cha.write("%com:\tregion {} of {} starts. (extra region) original timestamp start: {}\n". \
+                                                  format(curr_region.number,
+                                                         num_regions,
+                                                         curr_region.onset_ms))
+
+                                begin_region_written = True
+
+                            update_result = update_line(line, interval, split_interval, curr_subregion_diff)
+                            new_cha.write(update_result[0])
+
+                        elif interval_at_region_offset(split_interval, curr_region):
+                            update_result = update_line(line, interval, split_interval, curr_subregion_diff)
+                            new_cha.write(update_result[0])
+
+                            if not curr_region.special:
+                                new_cha.write("%com:\tregion {} of {} ends. (coded subregion) original timestamp end: {}\n". \
+                                              format(curr_region.number,
+                                                     num_regions,
+                                                     curr_region.offset_ms))
+                            else:
+                                new_cha.write("%com:\tregion {} of {} ends. (extra region) original timestamp end: {}\n". \
+                                              format(curr_region.number,
+                                                     num_regions,
+                                                     curr_region.offset_ms))
+
+                            output_interval_tail = update_result[1][1]
+
+                            if region_deque:
+                                curr_region = region_deque.popleft()
+                            begin_region_written = False
+                            curr_subreg_num += 1
+
+
+                    # non tiered region inside subregion
+                    elif region_inside_region(curr_region, last_interval_read):
+                        new_cha.write(line)
+
+def update_line(line, old_interval, old_interval_int, diff):
+
+    new_onset = old_interval_int[0] - diff
+    new_offset = old_interval_int[1] - diff
+
+    new_interval = "\x15{}_{}\x15".format(new_onset, new_offset)
+    line = line.replace(old_interval, new_interval)
+    return (line, [new_onset, new_offset])
+
+def interval_at_region_offset(interval, subregion):
+    if interval[1] == subregion.offset_ms:
+        return True
+    return False
+
+def region_inside_interval(comp_interval, last_interval, curr_subregion):
+    split_comp = comp_interval.split("_")
+    split_comp = map(int, split_comp)
+
+    split_last = last_interval.split("_")
+    split_last = map(int, split_last)
+
+
+def region_inside_region(subregion, cha_timestamp):
+    if (subregion.onset_ms <= int(cha_timestamp[0])) and \
+            (subregion.offset_ms > int(cha_timestamp[1])):
+        return True
+    return False
 
 def region_time_sum(subregions):
     """
