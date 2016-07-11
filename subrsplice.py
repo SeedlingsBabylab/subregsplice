@@ -7,12 +7,13 @@ import subprocess as sp
 
 from collections import deque
 
-
 interval_regx = re.compile("(\025\d+_\d+\025)")
 
 class Subregion(object):
-    def __init__(self, number, onset, onset_ms, offset, offset_ms, diff, special):
-        self.number = number
+    def __init__(self, sr_or_ex, sr_num, chron_num, onset, onset_ms, offset, offset_ms, diff, comment):
+        self.sr_or_ex = sr_or_ex
+        self.sr_num = sr_num
+        self.chron_num = chron_num
         self.onset = onset
         self.onset_ms = onset_ms
         self.end = offset
@@ -21,7 +22,8 @@ class Subregion(object):
         self.diff = 0
         self.orig_audio_path = ""
         self.output_path = ""
-        self.special = special
+        self.comment = comment
+        self.ex_reg_num = None
 
 
 def read_subregions(path):
@@ -30,13 +32,22 @@ def read_subregions(path):
         reader = csv.reader(input)
         reader.next()
         for row in reader:
-            interval = ms_to_hhmmss([int(row[1]), int(row[2])])
-            region = Subregion(row[0], interval[0], int(row[1]),
-                               interval[1], int(row[2]), interval[2],
-                               row[3])
-            region.diff = int(row[2]) - int(row[1])
+            onset = row[3].split("_")[1]
+            offset = row[4].split("_")[1]
+
+            interval = ms_to_hhmmss([int(onset), int(offset)])
+            region = Subregion(row[0],
+                               row[1],
+                               row[2],
+                               interval[0],
+                               int(onset),
+                               interval[1],
+                               int(offset),
+                               interval[2],
+                               row[5])
+            region.diff = int(offset) - int(onset)
             region.orig_audio_path = audio_file
-            out_path = os.path.join(output_path, "{}.wav".format(row[0]))
+            out_path = os.path.join(output_path, "{}.wav".format(row[2]))
             region.output_path = out_path
             subregions.append(region)
 
@@ -126,7 +137,8 @@ def create_new_cha(subregions):
     last_interval_read = None
     last_interval_written = None
 
-    num_regions  = len(subregions)
+    num_regions  = count_num_subregions(subregions)
+    num_ex_reg = count_num_ex_subregions(subregions)
     curr_subreg_num = 1
 
     begin_region_written = False
@@ -165,16 +177,23 @@ def create_new_cha(subregions):
                             print "print inside region"
                             if not begin_region_written: # at the beginning
 
-                                if not curr_region.special:
+                                if curr_region.sr_or_ex == "sr":
                                     new_cha.write("%com:\tregion {} of {} starts. (coded subregion) original timestamp start: {}\n".\
-                                            format(curr_region.number,
+                                            format(curr_region.sr_num,
                                                    num_regions,
                                                    curr_region.onset_ms))
                                 else:
-                                    new_cha.write("%com:\tregion {} of {} starts. (extra region) original timestamp start: {}\n". \
-                                                  format(curr_region.number,
-                                                         num_regions,
-                                                         curr_region.onset_ms))
+                                    if curr_region.comment:
+                                        new_cha.write("%com:\textra region {} of {} starts. (extra region) original timestamp start: {} --- comment: {}\n". \
+                                                        format(curr_region.ex_reg_num,
+                                                               num_ex_reg,
+                                                               curr_region.onset_ms,
+                                                               curr_region.comment))
+                                    else:
+                                        new_cha.write("%com:\textra region {} of {} starts. (extra region) original timestamp start: {}\n". \
+                                                      format(curr_region.ex_reg_num,
+                                                             num_ex_reg,
+                                                             curr_region.onset_ms))
 
                                 begin_region_written = True
 
@@ -185,15 +204,15 @@ def create_new_cha(subregions):
                             update_result = update_line(line, interval, split_interval, curr_subregion_diff)
                             new_cha.write(update_result[0])
 
-                            if not curr_region.special:
+                            if curr_region.sr_or_ex == "sr":
                                 new_cha.write("%com:\tregion {} of {} ends. (coded subregion) original timestamp end: {}\n". \
-                                              format(curr_region.number,
+                                              format(curr_region.sr_num,
                                                      num_regions,
                                                      curr_region.offset_ms))
                             else:
-                                new_cha.write("%com:\tregion {} of {} ends. (extra region) original timestamp end: {}\n". \
-                                              format(curr_region.number,
-                                                     num_regions,
+                                new_cha.write("%com:\textra region {} of {} ends. (extra region) original timestamp end: {}\n". \
+                                              format(curr_region.ex_reg_num,
+                                                     num_ex_reg,
                                                      curr_region.offset_ms))
 
                             output_interval_tail = update_result[1][1]
@@ -248,6 +267,32 @@ def region_time_sum(subregions):
         time += region.diff
     return time
 
+def set_ex_reg_nums(subregions):
+    num = 1
+    for region in subregions:
+        if region.sr_or_ex == "ex":
+            region.ex_reg_num = num
+            num += 1
+    return subregions
+
+def count_num_ex_subregions(subregions):
+    count = 0
+    for region in subregions:
+        if region.sr_or_ex == "ex":
+            count += 1
+    return count
+
+def count_num_subregions(subregions):
+    count = 0
+    numbers_seen = []
+    for region in subregions:
+        if region.sr_or_ex == "sr":
+            if region.sr_num in numbers_seen:
+                continue
+            else:
+                numbers_seen.append(region.sr_num)
+                count += 1
+    return count
 
 if __name__ == "__main__":
     cha_file = sys.argv[1]
@@ -256,6 +301,7 @@ if __name__ == "__main__":
     output_path = sys.argv[4]
 
     subregions = read_subregions(subregions_file)
+    subregions = set_ex_reg_nums(subregions)
 
     slice_audio_file(subregions)
     concat_subregions(subregions)
