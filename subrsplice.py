@@ -83,6 +83,8 @@ def concat_subregions(subregions):
     command = ["ffmpeg",
                "-f",
                "concat",
+               "-safe",
+               "0",
                "-i",
                "concat_list.txt",
                "-c",
@@ -307,4 +309,3 @@ if __name__ == "__main__":
     concat_subregions(subregions)
 
     create_new_cha(subregions)
-
