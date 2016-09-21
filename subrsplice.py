@@ -32,7 +32,7 @@ def read_subregions(path):
         reader = csv.reader(input)
         reader.next()
         for row in reader:
-            onset = row[3].split("_")[1]
+            onset = row[3].split("_")[0]
             offset = row[4].split("_")[1]
 
             interval = ms_to_hhmmss([int(onset), int(offset)])
@@ -95,8 +95,9 @@ def concat_subregions(subregions):
     command_string = " ".join(command)
     print command_string
 
-    pipe = sp.Popen(command, stdout=sp.PIPE, bufsize=10 ** 8)
-    out, err = pipe.communicate()
+    with open(os.devnull, 'w') as fp:
+        pipe = sp.Popen(command, stdout=fp, bufsize=10 ** 8)
+        out, err = pipe.communicate()
 
     # cleanup
     os.remove("concat_list.txt")
@@ -176,8 +177,10 @@ def create_new_cha(subregions):
 
                         # interval is inside the range of the subregion
                         if region_inside_region(curr_region, split_interval):
-                            print "print inside region"
+                            #print "print inside region"
                             if not begin_region_written: # at the beginning
+                                if curr_region.onset_ms != split_interval[0]:
+                                    raise Exception("timestamp is missing")
 
                                 if curr_region.sr_or_ex == "sr":
                                     new_cha.write("%com:\tregion {} of {} starts. (coded subregion) original timestamp start: {}\n".\
@@ -198,6 +201,7 @@ def create_new_cha(subregions):
                                                              curr_region.onset_ms))
 
                                 begin_region_written = True
+                                end_region_written = False
 
                             update_result = update_line(line, interval, split_interval, curr_subregion_diff)
                             new_cha.write(update_result[0])
@@ -222,12 +226,17 @@ def create_new_cha(subregions):
                             if region_deque:
                                 curr_region = region_deque.popleft()
                             begin_region_written = False
+                            end_region_written = True
                             curr_subreg_num += 1
 
+                        elif region_outside_region(split_interval, curr_region) and (not end_region_written) and begin_region_written:
+                            raise Exception("timestamp is missing")
 
                     # non tiered region inside subregion
                     elif region_inside_region(curr_region, last_interval_read):
                         new_cha.write(line)
+
+
 
 def update_line(line, old_interval, old_interval_int, diff):
 
@@ -243,17 +252,15 @@ def interval_at_region_offset(interval, subregion):
         return True
     return False
 
-def region_inside_interval(comp_interval, last_interval, curr_subregion):
-    split_comp = comp_interval.split("_")
-    split_comp = map(int, split_comp)
-
-    split_last = last_interval.split("_")
-    split_last = map(int, split_last)
-
 
 def region_inside_region(subregion, cha_timestamp):
     if (subregion.onset_ms <= int(cha_timestamp[0])) and \
             (subregion.offset_ms > int(cha_timestamp[1])):
+        return True
+    return False
+
+def region_outside_region(cha_timestamp, subregion):
+    if subregion.offset_ms < cha_timestamp[0]:
         return True
     return False
 
